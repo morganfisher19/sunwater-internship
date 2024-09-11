@@ -1,14 +1,35 @@
-# Load necessary libraries
+
 library(shiny)
-library(dplyr)
 library(ggplot2)
-library(extrafont)
+library(dplyr)
+library(tidyverse)
+library(ggiraph)
+library(gdtools)
 
-
+#Register the font
+register_gfont("Roboto")
 
 # Load the dataset
-
 df <- read.csv("tweet_issue_lawmaker_dates.csv")
+
+# Data currently has the following variables
+    # comm_content_id	
+    # member_id	
+    # person_id	
+    # chamber	
+    # content	
+    # issue_name	
+    # swi_issue_id	
+    # pub_date	
+    # display_name	
+    # formal_title	
+    # first_name	
+    # last_name	
+    # party_name	
+    # us_state_id	
+    # district_no
+
+
 
 # Modify date column
 df$date <- as.Date(df$pub_date, format= "%Y-%m-%d")
@@ -21,16 +42,22 @@ df <- df %>%
   ungroup() %>%
   arrange(date_sort)
 
-
 #Modify party column
 df$party_name <- gsub(",.*", "", df$party_name)
+
+#Create chart name column
+df <- df %>%
+  mutate(chart_name = paste0(substr(display_name, 1, 3), ". ", last_name, " ", sub(".*\\s(\\S+)$", "\\1", display_name)))
+
+# Modify issue column
+df$issue_name <- gsub("\\*\\*$", "", df$issue_name)
 
 
 # Define UI for the application
 ui <- fluidPage(
   
   # Link to external CSS file
-  includeCSS("styles_new.css"),
+  includeCSS("styles.css"),
   
   # Title section
   tags$div(
@@ -39,41 +66,41 @@ ui <- fluidPage(
   ),
   
   fluidRow(
-    # Sidebar Panel
+    # Selection Panel
     column(
       width = 12,  # Initial width
+      addGFontHtmlDependency(family = c("Roboto")), # Add font dependency
       id = "sidebar",
       tags$div(
         id = "sidebar-content",
         tags$div(
           class = "grid-container",
+          # Select Issue
           selectInput("selected_issue",
                       "Issue Area",
-                      choices = c("All", "Government Operations" , "Law, Crime, and Family Issues","Education", "Health", 
-                                  "International Affairs and Foreign Aid","Economy", "Immigration and Refugee Issues", 
-                                  "Civil Rights, Minority Issues, and Civil Liberties", "Social Welfare", "Energy", 
-                                  "Community Development and Housing Issues", "Agriculture", "Defense", 
-                                  "Banking, Finance, and Domestic Commerce", "Labor and Employment", "Environment", 
-                                  "Space, Science, Technology, and Communications", "Transportation", "Cultural Issues", 
-                                  "Public Lands, Water Management, and Territorial Issues", "Foreign Trade", 
-                                  "Space, Science, Technology, and Communications"),
+                      choices = c("All", sort(unique(df$issue_name))),
                       selected = "All"),
+          # Select Chamber
           selectInput("selected_chamber",
                       "Chamber",
                       choices = c("Both Chambers", "House", "Senate"),
                       selected = "Both Chambers"),
+          # Select Party
           selectInput("selected_party",
                       "Party",
                       choices = c("All Parties", "Democrat", "Republican", "Independent"),
                       selected = "All Parties"),
+          # Select Number pf Lawkmakers to display
           selectInput("num_lawmakers",
                       "Number of lawmakers",
-                      choices = c("20", "50", "100", "All"),
+                      choices = c("10", "20", "50"),
                       selected = "20"),
+          # Select start date
           selectInput("start_date",
                       "Start Date",
                       choices = unique(df$date_display),
                       selected = head(df$date_display, 1)),
+          # Select end date
           selectInput("end_date",
                       "End Date",
                       choices = unique(df$date_display),
@@ -89,76 +116,34 @@ ui <- fluidPage(
       id = "main",
       titlePanel(textOutput("main_title")),
       tags$h3(id = "subtitle", textOutput("subtitle")),
-      uiOutput("plot.ui")
+      girafeOutput("plot", width = "1000px"),
+      tags$script(
+        "Shiny.addCustomMessageHandler('openURL', function(url) { window.open(url); });"
+      )
     )
   )
 )
 
 
+
 # Define server logic
-server <- function(input, output) {
-  
-  # Reactive expression to compute plot height based on selected number of lawmakers
-  plotHeight <- reactive(
-    if (input$selected_party == "Independent") {
-      return ("700")
-    }
-    
-    else if (input$num_lawmakers == "50") {
-      return("1000")
-    } 
-    
-    else if (input$num_lawmakers == "100")  {
-      return("1700")
-    } 
-    
-    else if (input$num_lawmakers == "All") {
-      if (input$selected_chamber == "Senate") {
-        if(input$selected_party == "Democrat" | input$selected_party == "Republican") {
-          return("1000")
-        } else {
-          return("1700")
-        }
-      }
-      else if(input$selected_chamber == "House") {
-        if(input$selected_party == "Democrat" | input$selected_party == "Republican") {
-          return("4000")
-        } else {
-          return("6000")
-        }
-      }
-      else {
-        if(input$selected_party == "Democrat" | input$selected_party == "Republican") {
-          return ("4000")
-        } else{
-          return("8000")
-        }
-      }
-    }
-    
-    else {
-      return("700")
-    }
-  )
+server <- function(input, output, session) {
   
   # Render title & subtitle text based on slider input
   output$main_title <- renderText({
     if (input$selected_issue == "All") {
-      paste("Top", input$num_lawmakers, "Lawmakers to tweet") 
+      paste("Top", input$num_lawmakers, "Lawmakers with Most Frequent X Posts") 
     } else {
-      paste("Top", input$num_lawmakers, "Lawmakers to tweet about", input$selected_issue) 
+      paste("Top", input$num_lawmakers, "Lawmakers with Most Frequent X Posts about", input$selected_issue) 
     }
   })
   output$subtitle <- renderText({
-    paste0(input$selected_chamber, ", ", input$selected_party)
+    paste0(
+      input$selected_chamber, ", ", input$selected_party, ", ", input$start_date, " to ", input$end_date
+    )
   })
   
-  output$plot.ui <- renderUI({
-    plotOutput("plot", height = plotHeight())
-  })
-  
-  output$plot <- renderPlot({
-    
+  output$plot <- renderGirafe({
     # Filter by date
     start_date <- df %>% filter(date_display == input$start_date) %>% pull(date_sort)
     end_date <- df %>% filter(date_display == input$end_date) %>% pull(date_sort)
@@ -189,11 +174,11 @@ server <- function(input, output) {
       select(-date_sort, -date_display)
     if (input$selected_issue == "All") {
       plot_df <- filtered_df %>%
-        group_by(display_name, party_name) %>%
+        group_by(display_name, party_name, chart_name, person_id) %>%
         summarise(posts = sum(posts), .groups = "drop")
     } else {
       plot_df <- filtered_df %>%
-        group_by(issue_name, display_name, party_name) %>%
+        group_by(issue_name, chart_name, display_name, party_name, person_id) %>%
         summarise(posts = sum(posts), .groups = "drop")
     }
     
@@ -203,38 +188,46 @@ server <- function(input, output) {
         arrange(desc(posts)) %>%
         head(as.numeric(input$num_lawmakers))
       # Filter the dataset for the selected lawmakers
-      plot_df <- plot_df %>% filter(display_name %in% top_lawmakers$display_name)
+      plot_df <- plot_df %>% filter(chart_name %in% top_lawmakers$chart_name)
     }
     
-    # Create custom theme
-    theme_custom <- function() {
-      theme_classic() +
-        theme(
-          text = element_text(family = "Roboto"),
-          axis.title = element_text(color="black", size = 16),
-          axis.text = element_text(color="black", size = 13),
-          legend.title = element_text(color="black", size = 16),
-          legend.text = element_text(color="black", size = 13)
-        )
-    }
     
     # Set colors
     party_colors <- c("Democrat" = "#2E598E", "Republican" = "#810000", "Independent" = "#B19CD9")
     
-    
-    # Plot graph
-    ggplot(plot_df, aes(x = reorder(display_name, posts), y = posts, fill = party_name)) +
-      geom_bar(stat = "identity") +
+    # Plot
+    p <- ggplot(plot_df, aes(x = reorder(chart_name, posts), y = posts, fill = party_name)) +
+      geom_bar_interactive(stat = "identity", aes(tooltip = paste0(display_name, ': ', posts, ' posts'), 
+                                                  data_id = person_id)) +      
       labs(x = "Lawmaker",
            y = "Number of Twitter Posts",
            fill = "Party Name") +
       coord_flip() +
       scale_fill_manual(values = party_colors) +
-      theme_custom()
+      theme_classic(base_family = "Roboto") +
+      theme(
+        axis.title = element_text(color="black", size = 8),
+        axis.text = element_text(color="black", size = 6),
+        legend.title = element_text(color="black", size = 8),
+        legend.text = element_text(color="black", size = 7))
+    
+    # Adding interactivity with hyperlinks
+    girafe(ggobj = p,
+           options = list(
+             opts_hover(css = "cursor:pointer;fill:gray;stroke:gray;"),
+             opts_selection(type = "single",
+                            css = "fill:gray;stroke:gray;")
+           ))
   })
   
+  observeEvent(input$plot_selected, {
+    selected_id <- input$plot_selected
+    if (!is.null(selected_id)) {
+      url <- paste0("https://app.legis1.com/lawmaker/detail?id=", selected_id, "#communications")
+      session$sendCustomMessage(type = 'openURL', message = url)
+    }
+  })
 }
 
-
-# Run the application
+# Run the application 
 shinyApp(ui = ui, server = server)
